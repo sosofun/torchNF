@@ -22,6 +22,12 @@
 3. 在吞吐、显存、可扩展性等方面提供稳定高性能。
 4. 支持多种并行方式组合（如 2D/3D 并行、DP+TP+PP+EP+CP）。
 
+### 4.1 初期 MVP 范围（必达）
+- 仅覆盖 DP / TP / EP 及其混合（DP+TP+EP）。
+- 必须基于 PyTorch DTensor（DeviceMesh + Layout/Placement）实现分布式并行。
+- 数据并行需适配 FSDP 与 FSDP2（作为参数/梯度/优化器状态分片与同步后端）。
+- 不包含 PP、CP 等后续并行方式；这些能力列为后续版本。
+
 ## 5. 非目标
 1. 不追求替代 PyTorch 生态（只扩展并行训练能力）。
 2. 不提供完整自动并行搜索（仅提供规划建议和启发式）。
@@ -39,8 +45,11 @@
 ## 7. 功能需求（Functional Requirements）
 
 ### 7.1 并行策略支持
+- **MVP 约束**：仅需实现 DP / TP / EP 及其组合；PP/CP 为后续阶段。
 1. **数据并行（DP）**
    - 支持参数、梯度、优化器状态的分布式同步。
+   - 基于 DTensor 的 Replicate/Shard 布局表达与执行。
+   - 适配 FSDP 与 FSDP2（参数/梯度/优化器状态分片与同步）。
    - 支持 ZeRO 风格的参数/梯度/优化器分片（可选）。
 2. **张量并行（TP）**
    - 支持 Transformer 常见算子分片（Linear、Attention、MLP）。
@@ -63,6 +72,7 @@
 - 统一的 DTensor 布局 API，支持 Shard、Replicate、Partial。
 - 提供布局推断与自动传播机制。
 - 提供布局可视化/调试工具。
+- 提供 DTensor 与 FSDP/FSDP2 状态映射与一致性检查。
 
 ### 7.3 易用性与研究友好性
 1. **最小侵入式 API**
@@ -80,6 +90,7 @@
 - 支持混合精度（AMP/BF16/FP8 可扩展）。
 - 支持梯度累积、梯度裁剪、激活重计算。
 - 支持检查点恢复与自动保存。
+- 支持 FSDP/FSDP2 包装与并行策略协同。
 
 ### 7.5 容错与恢复
 - 支持训练中断恢复（故障重启恢复最近 checkpoint）。
@@ -125,6 +136,7 @@
 - 使用 DTensor Layout 表示分片策略。
 - 在模块转换阶段生成 DTensor 化权重与输入输出。
 - 关键算子使用 DTensor-aware kernel。
+- 与 FSDP/FSDP2 的状态管理与通信路径对齐。
 
 ### 9.3 并行策略组合逻辑
 - 提供策略兼容矩阵与约束规则。
@@ -155,9 +167,8 @@
 from torchnf import ParallelConfig, distribute, Trainer
 
 config = ParallelConfig(
-    mesh="dp=4,tp=2,pp=2,cp=1,ep=2",
+    mesh="dp=4,tp=2,ep=2",
     tp_style="tensor",
-    pipeline_schedule="1f1b",
     moe_top_k=2
 )
 
@@ -183,12 +194,14 @@ trainer.fit(model, dataloader)
 - PyTorch >= 2.x。
 - CUDA >= 12.x（可扩展）。
 - 兼容常见 GPU（A100、H100、L40 等）。
+- 需兼容 FSDP 与 FSDP2 的 API 与状态管理约束。
 
 ## 14. 测试与验证需求
 - 功能测试：DP/TP/PP/CP/EP 单独与组合。
 - 性能测试：不同规模扩展与瓶颈分析。
 - 数值一致性测试：与单机 FP32 结果对齐。
 - 故障恢复测试：模拟节点中断与恢复。
+- MVP 兼容性测试：FSDP/FSDP2 与 DTensor 布局一致性验证。
 
 ## 15. 交付物
 - 设计文档与 API 文档。
