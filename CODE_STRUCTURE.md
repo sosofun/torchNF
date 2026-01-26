@@ -13,49 +13,30 @@
 ```
 torchnf/
   __init__.py
-  config/
-    __init__.py
-    parallel_config.py        # ParallelConfig 与校验
-  api/
-    __init__.py
-    distribute.py             # distribute(model, config)
-    trainer.py                # Trainer/训练循环
-  core/
+  config.py                   # ParallelConfig 与校验
+  api.py                      # distribute(model, config) + Trainer
+  dist/
     __init__.py
     mesh.py                   # DeviceMesh 构建与拓扑
     layout.py                 # DTensor 布局/Placement 工具
-    dtensor_utils.py          # DTensor 转换与辅助
+    dtensor.py                # DTensor 转换与辅助
+    fsdp.py                   # FSDP 适配层
+    fsdp2.py                  # FSDP2 适配层
+    state_dict.py             # state_dict/load_state_dict 兼容
   parallel/
     __init__.py
-    dp.py                     # DP 逻辑（与 FSDP/FSDP2 适配）
+    dp.py                     # DP 逻辑（调用 dist/fsdp*）
     tp.py                     # TP 逻辑（并行线性/注意力等）
     ep.py                     # EP 逻辑（MoE 路由/All-to-All）
     mixed.py                  # DP+TP+EP 组合策略
-  fsdp/
-    __init__.py
-    fsdp_adapter.py           # FSDP 适配层
-    fsdp2_adapter.py          # FSDP2 适配层
-    state_dict.py             # state_dict/load_state_dict 兼容
-  moe/
-    __init__.py
-    router.py                 # Top-1/Top-2 路由
-    experts.py                # Expert 容量与负载均衡
-    all_to_all.py             # DTensor + NCCL All-to-All 包装
-  modules/
-    __init__.py
-    parallel_linear.py        # TP 线性层
-    parallel_attention.py     # TP 注意力（MVP 版）
-    moe_layer.py              # MoE 层
+    modules.py                # ParallelLinear/Attention/MoELayer
+    moe.py                    # Router/Experts/All-to-All
   runtime/
     __init__.py
     engine.py                 # 训练引擎/Step 封装
     checkpoint.py             # 保存/恢复（兼容 FSDP/FSDP2）
     logging.py                # 统一日志与指标
-  utils/
-    __init__.py
-    dist_init.py              # 分布式初始化
-    env.py                    # 环境变量/设备检测
-    validation.py             # 配置/布局合法性校验
+  utils.py                    # 分布式初始化/环境检测/校验
   tests/
     unit/                     # 单元测试
     integration/              # DP/TP/EP 组合测试
@@ -68,36 +49,32 @@ torchnf/
 
 ## 3. 关键模块职责
 
-### 3.1 config/
-- 负责并行配置建模与合法性校验。
+### 3.1 config.py
+- 并行配置建模与合法性校验。
 - 输出结构化并行拓扑信息（dp/tp/ep 维度）。
 
-### 3.2 core/
+### 3.2 api.py
+- 提供 `distribute(model, config)` 与 `Trainer` 入口。
+- 尽量薄封装，便于研究员快速接入。
+
+### 3.3 dist/
 - **mesh.py**：构建 DeviceMesh，并暴露 mesh 维度命名（dp/tp/ep）。
 - **layout.py**：封装 DTensor Placement（Shard/Replicate）。
-- **dtensor_utils.py**：参数/激活/梯度的 DTensor 转换与检查。
-
-### 3.3 parallel/
-- **dp.py**：面向 DP 的训练包装与参数同步接口，内部使用 fsdp_adapter。
-- **tp.py**：TP 切分逻辑与并行线性/注意力模块替换。
-- **ep.py**：MoE 的路由/All-to-All/专家分配。
-- **mixed.py**：DP+TP+EP 组合策略编排与冲突检测。
-
-### 3.4 fsdp/
-- **fsdp_adapter.py / fsdp2_adapter.py**：
+- **dtensor.py**：参数/激活/梯度的 DTensor 转换与检查。
+- **fsdp.py / fsdp2.py**：
   - 统一包装接口 `wrap_fsdp(model, config)`；
   - 提供 DTensor 布局与 FSDP/FSDP2 参数分片的一致性映射；
   - 处理 state_dict 兼容。
 
-### 3.5 moe/
-- **router.py**：Top-1/Top-2 路由策略；
-- **experts.py**：专家容量、负载均衡损失；
-- **all_to_all.py**：分布式 All-to-All，复用 DTensor 语义。
+### 3.4 parallel/
+- **dp.py**：面向 DP 的训练包装与参数同步接口，内部使用 dist/fsdp*。
+- **tp.py**：TP 切分逻辑与并行线性/注意力模块替换。
+- **ep.py**：MoE 的路由/All-to-All/专家分配。
+- **mixed.py**：DP+TP+EP 组合策略编排与冲突检测。
+- **modules.py**：并行化模块集合（ParallelLinear/ParallelAttention/MoELayer）。
+- **moe.py**：Top-1/Top-2 路由、负载均衡与 All-to-All。
 
-### 3.6 modules/
-- 提供并行化模块替换，如 `ParallelLinear`、`ParallelAttention`、`MoELayer`。
-
-### 3.7 runtime/
+### 3.5 runtime/
 - **engine.py**：Trainer 训练流程的核心；
 - **checkpoint.py**：与 FSDP/FSDP2 兼容的保存/恢复；
 - **logging.py**：统一日志、吞吐、显存与通信统计。
@@ -112,17 +89,16 @@ torchnf/
 4. **Trainer.fit**：执行训练循环与检查点保存。
 
 ## 5. 文件命名规范
-- 以功能为单位拆分文件，避免过大文件。
-- 公开 API 放在 `api/` 与 `__init__.py`。
-- Internal helper 放在 `utils/` 与 `core/`。
+- 以功能为单位拆分文件，避免过大文件，但不要过度碎片化。
+- 公开 API 放在 `api.py` 与 `__init__.py`。
+- 通用 helper 尽量集中在 `utils.py` 与 `dist/`。
 
 ## 6. 最小可用模块清单（MVP 必须实现）
-- `config/parallel_config.py`
-- `core/mesh.py`, `core/layout.py`
+- `config.py`, `api.py`
+- `dist/mesh.py`, `dist/layout.py`, `dist/dtensor.py`
+- `dist/fsdp.py`, `dist/fsdp2.py`, `dist/state_dict.py`
 - `parallel/dp.py`, `parallel/tp.py`, `parallel/ep.py`, `parallel/mixed.py`
-- `fsdp/fsdp_adapter.py`, `fsdp/fsdp2_adapter.py`
-- `moe/router.py`, `moe/all_to_all.py`
-- `api/distribute.py`, `api/trainer.py`
+- `parallel/modules.py`, `parallel/moe.py`
 - `runtime/engine.py`, `runtime/checkpoint.py`
 
 ## 7. 未来扩展（不在 MVP 范围）
